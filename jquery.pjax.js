@@ -2,7 +2,7 @@
 // copyright chris wanstrath
 // https://github.com/defunkt/jquery-pjax
 
-(function($){
+(function($, LazyLoad){
 
 // When called on a container with a selector, fetches the href with
 // ajax into the container or with the data-pjax attribute on the link
@@ -135,6 +135,87 @@ function handleSubmit(event, container, options) {
   event.preventDefault()
 }
 
+function arr_diff(a1, a2) {
+  var a=[], diff=[];
+  for (var i = 0; i < a1.length; i++) {
+    a[a1[i]] = true;
+  }
+  for (var i = 0; i < a2.length; i++) {
+    if(a[a2[i]]) delete a[a2[i]];
+    else a[a2[i]]=true;
+  }
+  for (var k in a) {
+    diff.push(k);
+  }
+  return diff;
+}
+
+function getResourceMap(linkHeaders) {
+  //console.log("getResourceMap: linkHeaders", linkHeaders);
+   var resourceMap = {
+    'text/javascript': {
+      extantSelector: 'script[src]',
+      addLinks: [],
+      removeLinks: []
+    },
+    'text/css': {
+      extantSelector: 'link[href], style.lazyload',
+      addLinks: [],
+      removeLinks: []
+    }
+  }
+  if (linkHeaders) {
+    linkHeaders.replace(/<(.*?)>;[\s]*?rel="(.*?)"/gmi, function(match, linkHeader, rel) {
+      var extantLinks = []
+      var links = linkHeader.split(',')
+      //console.log(rel + ' links', links)
+      $(resourceMap[rel].extantSelector).each(function() {
+          var extantLink = this.src || this.href || (this.innerHTML || this.innerText).match(/@import "(.*?)"/)[1]
+          //console.log(extantLink)
+          //remove files that no longer apply
+          if (links.indexOf(extantLink) === -1) {
+              resourceMap[rel].removeLinks.push(this)
+          }
+          else {
+              extantLinks.push(extantLink)
+          }
+      })
+      resourceMap[rel].addLinks = arr_diff(links, extantLinks)
+    })
+  }
+  //console.log("getResourceMap: resourceMap", resourceMap)
+  return resourceMap
+}
+
+function getCurrentLinks() {
+  var ersatzHeader = ''
+  var links = $('link[href]')
+  var styles = $('style.lazyload')
+  var scripts = $('script[src]')
+  var cssUrls = []
+  var jsUrls = []
+  if (links.length || styles.length) {
+    links.each(function(index, element) {
+      cssUrls.push(element.href)
+    })
+    styles.each(function(index, element) {
+      cssUrls.push((element.innerHTML || element.innerText).match(/@import "(.*?)"/)[1])
+    })
+    ersatzHeader = ersatzHeader + '<' + cssUrls.join(',') + '>; rel="text/css"'
+  }
+  if (ersatzHeader.length) {
+    ersatzHeader += ', '
+  }
+  if (scripts.length) {
+    scripts.each(function(index, element) {
+      jsUrls.push(element.src)
+    })
+    ersatzHeader = ersatzHeader + '<' + jsUrls.join(',') + '>; rel="text/javascript"'
+  }
+  //console.log("getCurrentLinks", ersatzHeader)
+  return ersatzHeader
+}
+
 // Loads a URL with ajax, puts the response body inside a container,
 // then pushState()'s the loaded URL.
 //
@@ -237,6 +318,8 @@ function pjax(options) {
 
     var container = extractContainer(data, xhr, options)
 
+    var resourceMap = getResourceMap(xhr.getResponseHeader('Link') || "")
+
     // If there is a layout version mismatch, hard load the new url
     if (currentVersion && latestVersion && currentVersion !== latestVersion) {
       locationReplace(container.url)
@@ -265,8 +348,7 @@ function pjax(options) {
     // Clear out any focused controls before inserting new page contents.
     document.activeElement.blur()
 
-    if (container.title) document.title = container.title
-    context.html(container.contents)
+    placeContent(context, container.contents, container.title, resourceMap);
 
     // FF bug: Won't autofocus fields that are inserted via JS.
     // This behavior is incorrect. So if theres no current focus, autofocus
@@ -323,6 +405,7 @@ function pjax(options) {
   }
 
   // Cancel the current request if we're already pjaxing
+  // TODO -- cancel outstanding LazyLoad reqs if we're already pjaxing
   var xhr = pjax.xhr
   if ( xhr && xhr.readyState < 4) {
     xhr.onreadystatechange = $.noop
@@ -335,7 +418,7 @@ function pjax(options) {
   if (xhr.readyState > 0) {
     if (options.push && !options.replace) {
       // Cache current container element before replacing it
-      cachePush(pjax.state.id, context.clone().contents())
+      cachePush(pjax.state.id, context.clone().contents(), getCurrentLinks())
 
       window.history.pushState(null, "", stripPjaxParam(options.requestUrl))
     }
@@ -394,7 +477,9 @@ if ('state' in window.history) {
 // You probably shouldn't use pjax on pages with other pushState
 // stuff yet.
 function onPjaxPopstate(event) {
+  //console.log("onPjaxPopstate")
   var state = event.state
+  var cache = cacheMapping[state.id] || {contents: null, links: null}
 
   if (state && state.container) {
     // When coming forward from a separate history session, will get an
@@ -408,7 +493,9 @@ function onPjaxPopstate(event) {
 
     var container = $(state.container)
     if (container.length) {
-      var direction, contents = cacheMapping[state.id]
+      var direction, 
+          contents = cache.contents, 
+          resourceMap = getResourceMap(cache.links)
 
       if (pjax.state) {
         // Since state ids always increase, we can deduce the history
@@ -417,7 +504,7 @@ function onPjaxPopstate(event) {
 
         // Cache current container before replacement and inform the
         // cache which direction the history shifted.
-        cachePop(direction, pjax.state.id, container.clone().contents())
+        cachePop(direction, pjax.state.id, container.clone().contents(), getCurrentLinks())
       }
 
       var popstateEvent = $.Event('pjax:popstate', {
@@ -439,8 +526,7 @@ function onPjaxPopstate(event) {
       if (contents) {
         container.trigger('pjax:start', [null, options])
 
-        if (state.title) document.title = state.title
-        container.html(contents)
+        placeContent(container, contents, state.title, resourceMap)
         pjax.state = state
 
         container.trigger('pjax:end', [null, options])
@@ -604,6 +690,30 @@ function parseHTML(html) {
   return $.parseHTML(html, document, true)
 }
 
+function placeContent(container, html, title, resourceMap) {
+  //console.log(resourceMap);
+  var cssLoaded = function() {
+    $(resourceMap['text/css'].removeLinks).remove()
+    container.html(html)
+    $(resourceMap['text/javascript'].removeLinks).remove()
+    if (resourceMap['text/javascript'].addLinks.length) {
+      LazyLoad.js(resourceMap['text/javascript'].addLinks, function() {
+        container.trigger('pjax:ready')
+      })
+    }
+    else {
+      container.trigger('pjax:ready')
+    }
+  }
+  if (title) document.title = title
+  if (resourceMap['text/css'].addLinks.length) {
+    LazyLoad.css(resourceMap['text/css'].addLinks, cssLoaded)
+  }
+  else {
+    cssLoaded()
+  }
+}
+
 // Internal: Extracts container and metadata from response.
 //
 // 1. Extracts X-PJAX-URL header if set
@@ -719,8 +829,9 @@ var cacheBackStack    = []
 // value - DOM Element to cache
 //
 // Returns nothing.
-function cachePush(id, value) {
-  cacheMapping[id] = value
+function cachePush(id, value, links) {
+  //console.log("cachePush");
+  cacheMapping[id] = {contents: value, links: links}
   cacheBackStack.push(id)
 
   // Remove all entires in forward history stack after pushing
@@ -742,9 +853,10 @@ function cachePush(id, value) {
 // value     - DOM Element to cache
 //
 // Returns nothing.
-function cachePop(direction, id, value) {
+function cachePop(direction, id, value, links) {
+  //console.log("cachePop");
   var pushStack, popStack
-  cacheMapping[id] = value
+  cacheMapping[id] = {contents: value, links: links}
 
   if (direction === 'forward') {
     pushStack = cacheBackStack
@@ -836,4 +948,4 @@ $.support.pjax =
 
 $.support.pjax ? enable() : disable()
 
-})(jQuery);
+})(jQuery, LazyLoad);
