@@ -1,3 +1,35 @@
+## This is a fork of the jquery-pjax library that supports receiving external references (JS, CSS) as Link headers and including them dynamically. 
+
+Example:
+
+Page 1:
+```
+<link href="A.css" type="text/css" rel="stylesheet">
+<link href="B.css" type="text/css" rel="stylesheet">
+.... (some html here, including the pjax container)....
+<script src="X.js" type="text/javascript"></script>
+<script src="Y.js" type="text/javascript"></script>
+```
+
+Makes a request to a server that returns a response with headers like:
+```
+Response Headers
+Content-Type:text/html; charset=utf-8
+Date:Thu, 06 Feb 2014 23:03:04 GMT
+Link: <B.css,C.css,>; rel="text/css",<Y.css,Z.css,>; rel="text/javascript"
+```
+
+The library will parse and diff the URLs against the links/scripts currently within the page, and use [rgrove's lazyload library](https://github.com/rgrove/lazyload/) to asynchonously include them.
+Each step of CSS -> HTML -> JS will execute only after the previous step has concluded (if there are any external resources in that step to include).
+The resulting page will look something like:
+```
+<link href="B.css" type="text/css" rel="stylesheet">
+<link href="C.css" type="text/css" rel="stylesheet">
+.... (PJAXed html is in here now)....
+<script src="Y.js" type="text/javascript"></script>
+<script src="Z.js" type="text/javascript"></script>
+```
+
 # pjax
 
 
