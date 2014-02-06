@@ -16,7 +16,7 @@ Makes a request to a server that returns a response with headers like:
 Response Headers
 Content-Type:text/html; charset=utf-8
 Date:Thu, 06 Feb 2014 23:03:04 GMT
-Link: <B.css,C.css,>; rel="text/css",<Y.css,Z.css,>; rel="text/javascript"
+Link: <B.css,C.css>; rel="text/css",<Y.css,Z.css>; rel="text/javascript"
 ```
 
 The library will parse and diff the URLs against the links/scripts currently within the page, and use [rgrove's lazyload library](https://github.com/rgrove/lazyload/) to asynchonously include them.
