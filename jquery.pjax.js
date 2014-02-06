@@ -479,9 +479,10 @@ if ('state' in window.history) {
 function onPjaxPopstate(event) {
   //console.log("onPjaxPopstate")
   var state = event.state
-  var cache = cacheMapping[state.id] || {contents: null, links: null}
+  var cache = null
 
   if (state && state.container) {
+    cache = cacheMapping[state.id] || {contents: null, links: null}
     // When coming forward from a separate history session, will get an
     // initial pop with a state we are already at. Skip reloading the current
     // page.
